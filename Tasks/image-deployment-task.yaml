@@ -1,0 +1,17 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: deploymnent
+spec:
+  workspaces:
+  - name: manifests
+  steps:
+    - name: apply
+      image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+      workingDir: /workspace/source
+      command: ["/bin/bash", "-c"]
+      args:
+        - |-
+          echo Applying deployment and service file
+          oc apply -f https://raw.githubusercontent.com/sachinayyar/tekton-spring-boot/main/k8s/deployment.yaml
+          echo -----------------------------------

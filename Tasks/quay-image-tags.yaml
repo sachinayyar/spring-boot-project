@@ -1,0 +1,66 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: quay-image-tags
+spec:
+  params:
+    - name: quay-registry
+      description: Quay registry URL
+      type: string
+      #default: quay.io
+    - name: quay-repo
+      description: Quay repository name
+      type: string
+      #default: sachinayyar
+    - name: quay-image
+      description: Quay image name
+      #default: tekton-argocd
+      type: string
+    - name: newtag
+      description: New tag for the image
+      type: string
+      #default: prod
+    - name: oldtag
+      type: string
+      #default: latest
+  steps:
+  - name: pull-image
+    image: 'ubuntu:latest'
+    env:
+      - name: QUAY_REGISTRY
+        value: $(params.quay-registry)
+      - name: QUAY_REPO
+        value: $(params.quay-repo)
+      - name: QUAY_IMAGE
+        value: $(params.quay-image)
+      - name: NEWTAG
+        value: $(params.newtag)
+      - name: OLDTAG
+        value: $(params.oldtag)
+    command:
+    - /bin/bash
+    args:
+    - -c
+    - |
+
+      apt-get update
+
+      apt-get -y install podman
+
+      podman version
+
+      podman login -u sachinayyar -p S@chin06 $QUAY_REGISTRY
+
+      podman pull $QUAY_REGISTRY/$QUAY_REPO/$QUAY_IMAGE:$OLDTAG
+
+      echo "image pulled from quay successfully"
+
+      podman tag $QUAY_REGISTRY/$QUAY_REPO/$QUAY_IMAGE:$OLDTAG $QUAY_REGISTRY/$QUAY_REPO/$QUAY_IMAGE:$NEWTAG
+
+      echo "image tagging completed"
+
+      podman login -u sachinayyar -p S@chin06 $QUAY_REGISTRY
+
+      podman push $QUAY_REGISTRY/$QUAY_REPO/$QUAY_IMAGE:$NEWTAG
+
+      echo "image pushed successfully"

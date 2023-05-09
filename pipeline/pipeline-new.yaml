@@ -1,0 +1,172 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: pipeline-git-sonar-mvn-buildah
+  namespace: pipeline-demo
+spec:
+  finally:
+    - name: cleanup-test
+      taskRef:
+        kind: Task
+        name: send-pipeline-logs
+      workspaces:
+        - name: mail
+          workspace: mail
+  params:
+    - default: quay.io/sachinayyar/tekton-argocd
+      description: The fully qualified image name
+      name: image-name
+      type: string
+    - default: 'https://github.com/sachinayyar/tekton-spring-boot'
+      description: The GitHub Repo of the Java Application
+      name: github-repo-url
+      type: string
+    - default: main
+      description: The GitHub revision to use
+      name: github-repo-revision
+      type: string
+  tasks:
+    - name: git-clone
+      params:
+        - name: url
+          value: $(params.github-repo-url)
+        - name: revision
+          value: $(params.github-repo-revision)
+        - name: deleteExisting
+          value: 'true'
+      taskRef:
+        kind: ClusterTask
+        name: git-clone
+      workspaces:
+        - name: output
+          workspace: source
+    - name: sonar
+      params:
+        - name: GOALS
+          value:
+            - 'sonar:sonar'
+      runAfter:
+        - git-clone
+      taskRef:
+        kind: ClusterTask
+        name: maven
+      workspaces:
+        - name: source
+          workspace: source
+        - name: maven-settings
+          workspace: source
+    - name: mvn-test
+      params:
+        - name: GOALS
+          value:
+            - '-B'
+            - clean
+            - test
+      runAfter:
+        - git-clone
+      taskRef:
+        kind: ClusterTask
+        name: maven
+      workspaces:
+        - name: maven-settings
+          workspace: maven-settings
+        - name: source
+          workspace: source
+    - name: mvn-package
+      params:
+        - name: GOALS
+          value:
+            - '-B'
+            - '-DskipTests'
+            - clean
+            - package
+            - deploy
+      runAfter:
+        - git-clone
+      taskRef:
+        kind: ClusterTask
+        name: maven
+      workspaces:
+        - name: maven-settings
+          workspace: maven-settings
+        - name: source
+          workspace: source
+    - name: buildah-image
+      params:
+        - name: IMAGE
+          value: '$(params.image-name)'
+        - name: TLSVERIFY
+          value: 'false'
+      runAfter:
+        - sonar
+        - mvn-test
+        - mvn-package
+      taskRef:
+        kind: ClusterTask
+        name: buildah
+      workspaces:
+        - name: source
+          workspace: source
+    - name: git-update-deployment
+      params:
+        - name: GIT_REPOSITORY
+          value: 'https://github.com/sachinayyar/tekton-spring-boot-config.git'
+        - name: CURRENT_IMAGE
+          value: 'quay.io/sachinayyar/tekton-argocd:latest'
+        - name: NEW_IMAGE
+          value: 'quay.io/sachinayyar/tekton-argocd:dev'
+        - name: NEW_DIGEST
+          value: $(tasks.buildah-image.results.IMAGE_DIGEST)
+        - name: KUSTOMIZATION_PATH
+          value: k8s/
+      runAfter:
+        - buildah-image
+      taskRef:
+        kind: Task
+        name: git-update-deployment
+      workspaces:
+        - name: workspace
+          workspace: workspace
+    - name: quay-image-tags
+      params:
+        - name: quay-registry
+          value: quay.io
+        - name: quay-repo
+          value: sachinayyar
+        - name: quay-image
+          value: tekton-argocd
+        - name: newtag
+          value: sac
+        - name: oldtag
+          value: dev
+      runAfter:
+        - git-update-deployment
+        - buildah-image
+      taskRef:
+        kind: Task
+        name: quay-image-tags
+    - name: git-update-deployment-w2a
+      params:
+        - name: GIT_REPOSITORY
+          value: 'https://github.com/sachinayyar/tekton-config.git'
+        - name: CURRENT_IMAGE
+          value: 'quay.io/sachinayyar/tekton-argocd:dev'
+        - name: NEW_IMAGE
+          value: 'quay.io/sachinayyar/tekton-argocd:sac'
+        - name: NEW_DIGEST
+          value: $(tasks.buildah-image.results.IMAGE_DIGEST)
+        - name: KUSTOMIZATION_PATH
+          value: k8s/
+      runAfter:
+        - quay-image-tags
+      taskRef:
+        kind: Task
+        name: git-update-deployment
+      workspaces:
+        - name: workspace
+          workspace: workspace
+  workspaces:
+    - name: source
+    - name: maven-settings
+    - name: workspace
+    - name: mail

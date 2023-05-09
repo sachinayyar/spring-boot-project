@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: spring-dev
+  name: spring-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spring-dev
+  template:
+    metadata:
+      labels:
+        app: spring-dev
+    spec:
+      containers:
+        - image: quay.io/sachinayyar/tekton-argocd:dev
+          imagePullPolicy: Always
+          name: spring-dev
+          ports:
+            - containerPort: 8083
+              protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: spring-dev
+  name: spring-dev
+spec:
+  ports:
+    - name: 8083-tcp
+      port: 8083
+      targetPort: 8083
+      protocol: TCP
+  selector:
+    app: spring-dev
+            

@@ -1,0 +1,157 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: pipeline-git-sonar-mvn-buildah
+  
+spec:
+  finally:
+    - name: cleanup-test
+      taskRef:
+        kind: Task
+        name: send-pipeline-logs
+      workspaces:
+        - name: mail
+          workspace: mail
+    
+    # PARAMETERS
+    
+  params:
+    - name: image-name
+      description: The fully qualified image name 
+      default: 'quay.io/sachinayyar/tekton-argocd'
+    - name: github-repo-url
+      description: The GitHub Repo of the Java Application
+      default: https://github.com/sachinayyar/tekton-spring-boot
+    - name: github-repo-revision
+      description: The GitHub revision to use
+      default: main
+  workspaces:
+    - name: source
+    - name: maven-settings
+    - name: workspace
+    - name: mail
+    
+    # TASK 01 GIT-CLONE
+    
+  tasks:
+    - name: git-clone
+      taskRef:
+        name: git-clone
+        kind: ClusterTask        
+      params:
+        - name: url
+          value: $(params.github-repo-url)
+        - name: revision
+          value: $(params.github-repo-revision)
+        - name: deleteExisting
+          value: 'true'
+      workspaces:
+        - name: output
+          workspace: source
+          
+          # TASK 02 SONARQUBE
+          
+    - name: sonar
+      params:
+        - name: GOALS
+          value:
+            - 'sonar:sonar'
+      runAfter:
+        - git-clone
+      taskRef:
+        kind: ClusterTask
+        name: maven
+      workspaces:
+        - name: source
+          workspace: source
+        - name: maven-settings
+          workspace: source
+          
+          # TASK 03 MAVEN TEST
+          
+    - name: mvn-test
+      taskRef:
+        name: maven
+        kind: ClusterTask        
+      runAfter:
+        - sonar
+      params:
+        - name: GOALS
+          value: ['-B', 'clean', 'test']
+      workspaces:
+        - name: maven-settings
+          workspace: maven-settings
+        - name: source
+          workspace: source
+          
+          # TASK 04 MAVEN-PACKAGE
+          
+    - name: mvn-package
+      taskRef:
+        name: maven
+        kind: ClusterTask        
+      runAfter:
+        - mvn-test
+      params:
+        - name: GOALS
+          value: ['-B', '-DskipTests', 'clean', 'package', 'deploy']
+      workspaces:
+        - name: maven-settings
+          workspace: maven-settings
+        - name: source
+          workspace: source
+          
+          # TASK 05 BUILDING IMAGE USING BUILDAH CLUSTER TASK
+          
+          
+    - name: buildah-image
+      taskRef:
+        name: buildah
+        kind: ClusterTask        
+      runAfter:
+        - mvn-package
+      params:
+        - name: IMAGE
+          value: '$(params.image-name)'
+        - name: TLSVERIFY
+          value: 'false'
+      workspaces:
+        - name: source
+          workspace: source
+          
+          
+          # TASK 06 GIT UPDATE KUSTOMIZATION FILE
+    
+    
+    - name: git-update-deployment
+      params:
+        - name: GIT_REPOSITORY
+          value: 'https://github.com/sachinayyar/tekton-spring-boot-config.git'
+        - name: CURRENT_IMAGE
+          value: quay.io/sachinayyar/tekton-argocd
+        - name: NEW_IMAGE
+          value: 'quay.io/sachinayyar/tekton-argocd:latest'
+        - name: NEW_DIGEST
+          value: $(tasks.buildah-image.results.IMAGE_DIGEST)
+        - name: KUSTOMIZATION_PATH
+          value: k8s/
+      runAfter:
+        - buildah-image
+      taskRef:
+        kind: Task
+        name: git-update-deployment
+      workspaces:
+        - name: workspace
+          workspace: workspace
+          
+       # TASK 07 SEND PIPELINE LOGS
+       
+ #   - name: send-pipeline-logs
+ #     runAfter:
+ #      - git-update-deployment
+ #     taskRef:
+ #       kind: Task
+ #       name: send-pipeline-logs
+ #     workspaces:
+ #       - name: mail
+ #         workspace: mail
